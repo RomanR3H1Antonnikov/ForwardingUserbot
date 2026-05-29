@@ -1,0 +1,8 @@
+mirrors:
+- dest_chat: -1002173257989
+  dest_topic: 9
+  dump_history: true
+  name: Mirror 2026-05-29 18:16
+  source_chat: -1001817920042
+  source_topic: 159715
+  start_from_message_id: 170511

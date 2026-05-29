@@ -1,0 +1,14 @@
+[Unit]
+Description=Telegram Config Bot (ForwardingUserbot)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ForwardingUserbot/tg-config-bot
+ExecStart=/opt/ForwardingUserbot/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONIOENCODING=utf-8
+
+[Install]
+WantedBy=multi-user.target

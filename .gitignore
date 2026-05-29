@@ -1,0 +1,11 @@
+.env
+session/
+!session/.gitkeep
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+.venv/
+.idea/
+test_out.txt
+test_err.txt
