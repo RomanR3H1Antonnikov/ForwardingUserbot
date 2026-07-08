@@ -7,6 +7,27 @@ def back_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def source_type_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📁 Группа", callback_data="src_type:group"),
+            InlineKeyboardButton(text="📌 Топик в группе", callback_data="src_type:topic"),
+            InlineKeyboardButton(text="📢 Канал", callback_data="src_type:channel"),
+        ],
+        [InlineKeyboardButton(text="← Назад", callback_data="back")],
+    ])
+
+
+def dest_type_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📁 Группа", callback_data="dst_type:group"),
+            InlineKeyboardButton(text="📌 Топик в группе", callback_data="dst_type:topic"),
+        ],
+        [InlineKeyboardButton(text="← Назад", callback_data="back")],
+    ])
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить", callback_data="launch")],

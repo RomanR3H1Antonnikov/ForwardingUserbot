@@ -15,10 +15,12 @@ _PID_FILE = "session/run.pid"
 
 def launch_userbot(
     source_chat: int,
-    source_topic: int,
+    source_topic: int | None,
+    source_type: str,
     source_from_msg: int,
     dest_chat: int,
-    dest_topic: int,
+    dest_topic: int | None,
+    dest_type: str,
     userbot_dir: str,
     name: str | None = None,
 ) -> subprocess.Popen:
@@ -33,8 +35,10 @@ def launch_userbot(
     config = {
         "mirrors": [{
             "name": name,
+            "source_type": source_type,
             "source_chat": source_chat,
             "source_topic": source_topic,
+            "dest_type": dest_type,
             "dest_chat": dest_chat,
             "dest_topic": dest_topic,
             "dump_history": True,

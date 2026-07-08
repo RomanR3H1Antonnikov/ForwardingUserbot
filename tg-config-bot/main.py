@@ -11,7 +11,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, Message
 from dotenv import load_dotenv
 
-from keyboards import back_keyboard, confirm_keyboard, paused_keyboard, running_keyboard
+from keyboards import (
+    back_keyboard,
+    confirm_keyboard,
+    dest_type_keyboard,
+    paused_keyboard,
+    running_keyboard,
+    source_type_keyboard,
+)
 from launcher import (
     create_pause_flag,
     is_process_alive,
@@ -36,22 +43,27 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 _SOURCE_PROMPT = (
-    "Скиньте ссылку на сообщение в нужной группе нужного топика, "
-    "<b>откуда</b> будет происходить пересылка.\n\n"
+    "Скиньте ссылку на сообщение в источнике "
+    "(<b>откуда</b> будет происходить пересылка).\n\n"
     "Пересылка выполнится от этого сообщения включительно до самого старого."
 )
+_SOURCE_TYPE_PROMPT = "Выберите тип источника:"
 _DEST_PROMPT = (
-    "Скиньте ссылку на <b>любое</b> сообщение из нужного топика нужной группы, "
-    "<b>куда</b> будет всё скидываться."
+    "Скиньте ссылку на <b>любое</b> сообщение из назначения "
+    "(<b>куда</b> будет всё скидываться)."
 )
+_DEST_TYPE_PROMPT = "Выберите тип назначения:"
 _BAD_LINK = (
     "Не распознал ссылку. Нужна ссылка вида:\n"
-    "<code>https://t.me/c/1234567890/42/100</code>"
+    "<code>https://t.me/c/1234567890/100</code> (приватное)\n"
+    "или <code>https://t.me/username/100</code> (публичное)"
 )
-_NO_TOPIC = (
-    "В ссылке не найден топик. Убедитесь, что ссылка ведёт на сообщение "
-    "внутри топика — формат: <code>.../топик/сообщение</code>"
-)
+
+_TYPE_LABEL = {
+    "group": "📁 Группа",
+    "topic": "📌 Топик",
+    "channel": "📢 Канал",
+}
 
 
 def _allowed(user_id: int) -> bool:
@@ -59,14 +71,34 @@ def _allowed(user_id: int) -> bool:
 
 
 async def _resolve_chat_id(parsed, bot: Bot) -> tuple[int | None, str | None]:
-    """Returns (chat_id, error_text). error_text is None on success."""
     if parsed.chat_id is not None:
         return parsed.chat_id, None
     try:
         chat = await bot.get_chat(f"@{parsed.username}")
         return chat.id, None
     except Exception as exc:
-        return None, f"Не удалось найти группу @{parsed.username}: {exc}"
+        return None, f"Не удалось найти чат @{parsed.username}: {exc}"
+
+
+def _build_summary(data: dict) -> str:
+    src_type = data.get("source_type", "topic")
+    dst_type = data.get("dest_type", "topic")
+
+    src_label = _TYPE_LABEL.get(src_type, src_type)
+    dst_label = _TYPE_LABEL.get(dst_type, dst_type)
+
+    src_name = f"@{data['source_username']}" if data.get("source_username") else f"<code>{data['source_chat']}</code>"
+    dst_name = f"@{data['dest_username']}" if data.get("dest_username") else f"<code>{data['dest_chat']}</code>"
+
+    src_extra = f" · топик #{data['source_topic']}" if src_type == "topic" and data.get("source_topic") else ""
+    dst_extra = f" · топик #{data['dest_topic']}" if dst_type == "topic" and data.get("dest_topic") else ""
+
+    return (
+        "<b>Конфигурация зеркала:</b>\n\n"
+        f"📥 <b>Источник:</b> {src_label} · {src_name}{src_extra} · с сообщения #{data['source_from_msg']}\n\n"
+        f"📤 <b>Назначение:</b> {dst_label} · {dst_name}{dst_extra}\n\n"
+        "Запустить юзербот с этими параметрами?"
+    )
 
 
 # ── /start ──────────────────────────────────────────────────────────────────
@@ -88,9 +120,6 @@ async def handle_source_link(message: Message, state: FSMContext):
     if not parsed:
         await message.answer(_BAD_LINK, parse_mode="HTML")
         return
-    if parsed.topic_id is None:
-        await message.answer(_NO_TOPIC, parse_mode="HTML")
-        return
 
     chat_id, err = await _resolve_chat_id(parsed, bot)
     if err:
@@ -101,12 +130,24 @@ async def handle_source_link(message: Message, state: FSMContext):
         source_chat=chat_id,
         source_topic=parsed.topic_id,
         source_from_msg=parsed.message_id,
+        source_username=parsed.username,
     )
+    await state.set_state(SetupFlow.source_type)
+    await message.answer(_SOURCE_TYPE_PROMPT, reply_markup=source_type_keyboard())
+
+
+# ── Step 2: source type ──────────────────────────────────────────────────────
+
+@dp.callback_query(F.data.startswith("src_type:"), SetupFlow.source_type)
+async def handle_source_type(callback: CallbackQuery, state: FSMContext):
+    src_type = callback.data.split(":")[1]
+    await state.update_data(source_type=src_type)
     await state.set_state(SetupFlow.dest_link)
-    await message.answer(_DEST_PROMPT, parse_mode="HTML", reply_markup=back_keyboard())
+    await callback.message.answer(_DEST_PROMPT, parse_mode="HTML", reply_markup=back_keyboard())
+    await callback.answer()
 
 
-# ── Step 2: dest link ────────────────────────────────────────────────────────
+# ── Step 3: dest link ────────────────────────────────────────────────────────
 
 @dp.message(SetupFlow.dest_link)
 async def handle_dest_link(message: Message, state: FSMContext):
@@ -114,46 +155,62 @@ async def handle_dest_link(message: Message, state: FSMContext):
     if not parsed:
         await message.answer(_BAD_LINK, parse_mode="HTML")
         return
-    if parsed.topic_id is None:
-        await message.answer(_NO_TOPIC, parse_mode="HTML")
-        return
 
     chat_id, err = await _resolve_chat_id(parsed, bot)
     if err:
         await message.answer(err)
         return
 
-    await state.update_data(dest_chat=chat_id, dest_topic=parsed.topic_id)
-    data = await state.get_data()
+    await state.update_data(
+        dest_chat=chat_id,
+        dest_topic=parsed.topic_id,
+        dest_username=parsed.username,
+    )
+    await state.set_state(SetupFlow.dest_type)
+    await message.answer(_DEST_TYPE_PROMPT, reply_markup=dest_type_keyboard())
+
+
+# ── Step 4: dest type ────────────────────────────────────────────────────────
+
+@dp.callback_query(F.data.startswith("dst_type:"), SetupFlow.dest_type)
+async def handle_dest_type(callback: CallbackQuery, state: FSMContext):
+    dst_type = callback.data.split(":")[1]
+    await state.update_data(dest_type=dst_type)
     await state.set_state(SetupFlow.confirm)
 
-    summary = (
-        "<b>Конфигурация зеркала:</b>\n\n"
-        "📥 <b>Источник</b>\n"
-        f"  Группа:       <code>{data['source_chat']}</code>\n"
-        f"  Топик:        <code>{data['source_topic']}</code>\n"
-        f"  С сообщения:  <code>{data['source_from_msg']}</code> (включительно, до самого старого)\n\n"
-        "📤 <b>Назначение</b>\n"
-        f"  Группа:       <code>{data['dest_chat']}</code>\n"
-        f"  Топик:        <code>{data['dest_topic']}</code>\n\n"
-        "Запустить юзербот с этими параметрами?"
-    )
-    await message.answer(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
+    data = await state.get_data()
+    summary = _build_summary(data)
+    await callback.message.answer(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
+    await callback.answer()
 
 
 # ── Back buttons ─────────────────────────────────────────────────────────────
 
-@dp.callback_query(F.data == "back", SetupFlow.dest_link)
-async def back_to_source(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "back", SetupFlow.source_type)
+async def back_to_source_link(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SetupFlow.source_link)
     await callback.message.answer(_SOURCE_PROMPT, parse_mode="HTML")
     await callback.answer()
 
 
-@dp.callback_query(F.data == "back", SetupFlow.confirm)
-async def back_to_dest(callback: CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "back", SetupFlow.dest_link)
+async def back_to_source_type(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SetupFlow.source_type)
+    await callback.message.answer(_SOURCE_TYPE_PROMPT, reply_markup=source_type_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back", SetupFlow.dest_type)
+async def back_to_dest_link(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SetupFlow.dest_link)
     await callback.message.answer(_DEST_PROMPT, parse_mode="HTML", reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "back", SetupFlow.confirm)
+async def back_to_dest_type(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(SetupFlow.dest_type)
+    await callback.message.answer(_DEST_TYPE_PROMPT, reply_markup=dest_type_keyboard())
     await callback.answer()
 
 
@@ -168,10 +225,12 @@ async def handle_launch(callback: CallbackQuery, state: FSMContext):
         mirror_name = f"Mirror {datetime.now():%Y-%m-%d %H:%M}"
         process = launch_userbot(
             source_chat=data["source_chat"],
-            source_topic=data["source_topic"],
+            source_topic=data.get("source_topic"),
+            source_type=data.get("source_type", "topic"),
             source_from_msg=data["source_from_msg"],
             dest_chat=data["dest_chat"],
-            dest_topic=data["dest_topic"],
+            dest_topic=data.get("dest_topic"),
+            dest_type=data.get("dest_type", "topic"),
             userbot_dir=USERBOT_DIR,
             name=mirror_name,
         )
@@ -255,12 +314,14 @@ async def handle_resume(callback: CallbackQuery, state: FSMContext):
     try:
         process = launch_userbot(
             source_chat=data["source_chat"],
-            source_topic=data["source_topic"],
+            source_topic=data.get("source_topic"),
+            source_type=data.get("source_type", "topic"),
             source_from_msg=data["source_from_msg"],
             dest_chat=data["dest_chat"],
-            dest_topic=data["dest_topic"],
+            dest_topic=data.get("dest_topic"),
+            dest_type=data.get("dest_type", "topic"),
             userbot_dir=USERBOT_DIR,
-            name=data["mirror_name"],  # same name => same progress file => resume
+            name=data["mirror_name"],
         )
         await state.update_data(pid=process.pid)
         await state.set_state(SetupFlow.running)

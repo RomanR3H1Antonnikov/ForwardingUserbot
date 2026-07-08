@@ -22,6 +22,18 @@ def _in_topic(message, topic_id: int) -> bool:
     return top == topic_id or msg == topic_id
 
 
+def _matches_source(msg, mirror: dict) -> bool:
+    """Return True if msg belongs to the mirror's configured source."""
+    source_type = mirror.get("source_type", "topic")
+    if source_type == "topic":
+        return _in_topic(msg, mirror["source_topic"])
+    elif source_type == "group":
+        # Capture only top-level group messages, not messages inside topics
+        return not msg.reply_to
+    else:  # channel
+        return True
+
+
 async def _send_safe(client, coro_factory, name: str):
     """Run coro_factory() retrying on FloodWait."""
     while True:
@@ -156,9 +168,10 @@ def _write_done(name: str, count: int):
 
 async def _dump_history(client, mirror: dict):
     source_chat = mirror["source_chat"]
-    source_topic = mirror["source_topic"]
+    source_topic = mirror.get("source_topic")
+    source_type = mirror.get("source_type", "topic")
     dest_chat = mirror["dest_chat"]
-    dest_topic = mirror["dest_topic"]
+    dest_topic = mirror.get("dest_topic")
     name = mirror["name"]
     config_start_id = mirror.get("start_from_message_id", 1)
 
@@ -166,14 +179,15 @@ async def _dump_history(client, mirror: dict):
     count = _load_count(name)
     print(f"[{name}] Dumping from message ID {start_id} (newest -> oldest), already done: {count}...")
 
+    # For topic source, filter iter_messages by topic; for group/channel, iterate all
+    iter_kwargs = {"max_id": start_id + 1}
+    if source_type == "topic" and source_topic is not None:
+        iter_kwargs["reply_to"] = source_topic
+
     pause_flag = _pause_flag_file(name)
     pending_group: list = []  # [grouped_id, [messages]]
 
-    async for msg in client.iter_messages(
-        source_chat,
-        reply_to=source_topic,
-        max_id=start_id + 1,
-    ):
+    async for msg in client.iter_messages(source_chat, **iter_kwargs):
         if msg.grouped_id:
             if pending_group and pending_group[0] != msg.grouped_id:
                 await _copy_album(client, pending_group[1], dest_chat, dest_topic, name)
@@ -237,14 +251,14 @@ async def setup(client):
         msg = event.message
 
         mirror = next(
-            (m for m in mirrors if event.chat_id == m["source_chat"] and _in_topic(msg, m["source_topic"])),
+            (m for m in mirrors if event.chat_id == m["source_chat"] and _matches_source(msg, m)),
             None,
         )
         if not mirror:
             return
 
         dest_chat = mirror["dest_chat"]
-        dest_topic = mirror["dest_topic"]
+        dest_topic = mirror.get("dest_topic")
         name = mirror["name"]
 
         if msg.grouped_id:
@@ -265,7 +279,7 @@ async def setup(client):
                         client,
                         entry["messages"],
                         entry["mirror"]["dest_chat"],
-                        entry["mirror"]["dest_topic"],
+                        entry["mirror"].get("dest_topic"),
                         entry["mirror"]["name"],
                     )
 
