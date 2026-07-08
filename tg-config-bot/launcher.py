@@ -1,4 +1,5 @@
 import os
+import signal
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -103,19 +104,16 @@ def _python(userbot_path: Path) -> str:
 
 def is_process_alive(pid: int) -> bool:
     try:
-        result = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True, text=True,
-        )
-        return str(pid) in result.stdout
-    except Exception:
+        os.kill(pid, 0)
+        return True
+    except OSError:
         return False
 
 
 def stop_process(pid: int):
     try:
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-    except Exception:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
         pass
 
 
