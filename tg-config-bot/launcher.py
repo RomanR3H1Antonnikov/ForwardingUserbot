@@ -25,7 +25,10 @@ def launch_userbot(
     userbot_dir: str,
     name: str | None = None,
     media_filter: str = "all",
+    direction: str = "older",
 ) -> subprocess.Popen:
+    if direction not in {"older", "newer"}:
+        raise ValueError(f"Unknown direction: {direction}")
     if media_filter not in {"all", "photo", "video"}:
         raise ValueError(f"Unknown media filter: {media_filter}")
     userbot_path = (_HERE / userbot_dir).resolve()
@@ -47,6 +50,7 @@ def launch_userbot(
             "dest_topic": dest_topic,
             "dump_history": True,
             "media_filter": media_filter,
+            "direction": direction,
             "start_from_message_id": source_from_msg,
         }]
     }

@@ -15,6 +15,7 @@ from keyboards import (
     back_keyboard,
     confirm_keyboard,
     dest_type_keyboard,
+    direction_keyboard,
     media_filter_keyboard,
     paused_keyboard,
     running_keyboard,
@@ -46,7 +47,8 @@ dp = Dispatcher(storage=MemoryStorage())
 _SOURCE_PROMPT = (
     "Скиньте ссылку на сообщение в источнике "
     "(<b>откуда</b> будет происходить пересылка).\n\n"
-    "Пересылка выполнится от этого сообщения включительно до самого старого."
+    "Далее выберите направление: к старым сообщениям или к новым.\n"
+    "Чтобы забрать новые посты, укажите последнее уже пересланное сообщение в источнике."
 )
 _SOURCE_TYPE_PROMPT = "Выберите тип источника:"
 _DEST_PROMPT = (
@@ -60,6 +62,12 @@ _MEDIA_PROMPT = (
     "В режиме «Только видео» GIF и видеокружки пропускаются."
 )
 _MEDIA_LABEL = {"all": "📦 Всё", "photo": "🖼 Только фото", "video": "🎬 Только видео"}
+_DIRECTION_PROMPT = (
+    "В какую сторону пересылать?\n\n"
+    "⬆️ К старым — от указанного сообщения включительно до самого первого.\n"
+    "⬇️ К новым — после указанного сообщения до самого свежего."
+)
+_DIRECTION_LABEL = {"older": "⬆️ К старым (включая указанное)", "newer": "⬇️ К новым (после указанного)"}
 _BAD_LINK = (
     "Не распознал ссылку. Нужна ссылка вида:\n"
     "<code>https://t.me/c/1234567890/100</code> (приватное)\n"
@@ -105,6 +113,7 @@ def _build_summary(data: dict) -> str:
         f"📥 <b>Источник:</b> {src_label} · {src_name}{src_extra} · с сообщения #{data['source_from_msg']}\n\n"
         f"📤 <b>Назначение:</b> {dst_label} · {dst_name}{dst_extra}\n\n"
         f"<b>Пересылать:</b> {_MEDIA_LABEL[data.get('media_filter', 'all')]}\n\n"
+        f"<b>Направление:</b> {_DIRECTION_LABEL[data.get('direction', 'older')]}\n\n"
         "Запустить юзербот с этими параметрами?"
     )
 
@@ -193,6 +202,14 @@ async def handle_dest_type(callback: CallbackQuery, state: FSMContext):
 async def handle_media_filter(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(media_filter=callback.data.split(":")[1])
+    await state.set_state(SetupFlow.direction)
+    await callback.message.answer(_DIRECTION_PROMPT, reply_markup=direction_keyboard())
+
+
+@dp.callback_query(F.data.in_({"direction:older", "direction:newer"}), SetupFlow.direction)
+async def handle_direction(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(direction=callback.data.split(":")[1])
     await state.set_state(SetupFlow.confirm)
 
     data = await state.get_data()
@@ -230,11 +247,18 @@ async def back_to_dest_type(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(F.data == "back", SetupFlow.confirm)
+@dp.callback_query(F.data == "back", SetupFlow.direction)
 async def back_to_media_filter(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SetupFlow.media_filter)
     await callback.message.answer(_MEDIA_PROMPT, reply_markup=media_filter_keyboard())
+
+
+@dp.callback_query(F.data == "back", SetupFlow.confirm)
+async def back_to_direction(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SetupFlow.direction)
+    await callback.message.answer(_DIRECTION_PROMPT, reply_markup=direction_keyboard())
 
 
 # ── Launch ───────────────────────────────────────────────────────────────────
@@ -245,7 +269,7 @@ async def handle_launch(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer("⏳ Запускаю юзербот...")
     try:
-        mirror_name = f"Mirror {datetime.now():%Y-%m-%d %H:%M}"
+        mirror_name = f"Mirror {datetime.now():%Y-%m-%d %H:%M:%S.%f}"
         process = launch_userbot(
             source_chat=data["source_chat"],
             source_topic=data.get("source_topic"),
@@ -257,6 +281,7 @@ async def handle_launch(callback: CallbackQuery, state: FSMContext):
             userbot_dir=USERBOT_DIR,
             name=mirror_name,
             media_filter=data.get("media_filter", "all"),
+            direction=data.get("direction", "older"),
         )
         await state.update_data(pid=process.pid, mirror_name=mirror_name)
         await state.set_state(SetupFlow.running)
@@ -347,6 +372,7 @@ async def handle_resume(callback: CallbackQuery, state: FSMContext):
             userbot_dir=USERBOT_DIR,
             name=data["mirror_name"],
             media_filter=data.get("media_filter", "all"),
+            direction=data.get("direction", "older"),
         )
         await state.update_data(pid=process.pid)
         await state.set_state(SetupFlow.running)

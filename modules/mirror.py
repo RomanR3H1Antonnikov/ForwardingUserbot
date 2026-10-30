@@ -139,7 +139,8 @@ def _load_progress(name: str, default_id: int) -> int:
     path = _progress_file(name)
     if os.path.exists(path):
         try:
-            saved = int(open(path).read().strip())
+            with open(path) as f:
+                saved = int(f.read().strip())
             print(f"[{name}] Resuming from saved progress: message ID {saved}")
             return saved
         except (ValueError, OSError):
@@ -164,7 +165,8 @@ def _load_count(name: str) -> int:
     path = _count_file(name)
     if os.path.exists(path):
         try:
-            return int(open(path).read().strip())
+            with open(path) as f:
+                return int(f.read().strip())
         except (ValueError, OSError):
             pass
     return 0
@@ -193,13 +195,21 @@ async def _dump_history(client, mirror: dict):
     name = mirror["name"]
     media_filter = mirror.get("media_filter", "all")
     config_start_id = mirror.get("start_from_message_id", 1)
+    direction = mirror.get("direction", "older")
+    if direction not in {"older", "newer"}:
+        raise ValueError(f"Unknown direction: {direction}")
 
-    start_id = _load_progress(name, config_start_id)
+    saved_id = _load_progress(name, 0)
+    start_id = saved_id or config_start_id
     count = _load_count(name)
-    print(f"[{name}] Dumping from message ID {start_id} (newest -> oldest), already done: {count}...")
+    print(f"[{name}] Dumping from message ID {start_id} ({direction}), already done: {count}...")
 
     # For topic source, filter iter_messages by topic; for group/channel, iterate all
-    iter_kwargs = {"max_id": start_id + 1}
+    if direction == "newer":
+        iter_kwargs = {"min_id": start_id, "reverse": True}
+    else:
+        # Fresh backwards runs include the selected message; resumes exclude the checkpoint.
+        iter_kwargs = {"max_id": start_id if saved_id else start_id + 1}
     if source_type == "topic" and source_topic is not None:
         iter_kwargs["reply_to"] = source_topic
 

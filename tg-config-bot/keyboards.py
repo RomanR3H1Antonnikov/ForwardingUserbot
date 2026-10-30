@@ -37,6 +37,14 @@ def media_filter_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def direction_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬆️ К старым", callback_data="direction:older")],
+        [InlineKeyboardButton(text="⬇️ К новым", callback_data="direction:newer")],
+        [InlineKeyboardButton(text="← Назад", callback_data="back")],
+    ])
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить", callback_data="launch")],
