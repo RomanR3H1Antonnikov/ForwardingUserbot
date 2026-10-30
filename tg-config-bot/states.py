@@ -6,6 +6,7 @@ class SetupFlow(StatesGroup):
     source_type = State()
     dest_link = State()
     dest_type = State()
+    media_filter = State()
     confirm = State()
     running = State()
     paused = State()

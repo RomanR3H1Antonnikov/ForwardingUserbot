@@ -12,6 +12,17 @@ def load_config():
         return yaml.safe_load(f)
 
 
+def _matches_media(msg, media_filter: str = "all") -> bool:
+    if media_filter == "all":
+        return True
+    if media_filter == "photo":
+        return bool(msg.photo) and not isinstance(msg.media, MessageMediaWebPage)
+    if media_filter == "video":
+        return (bool(msg.video) and not msg.video_note and not msg.gif
+                and not isinstance(msg.media, MessageMediaWebPage))
+    raise ValueError(f"Unknown media filter: {media_filter}")
+
+
 def _in_topic(message, topic_id: int) -> bool:
     """Return True if message belongs to the given forum topic."""
     r = message.reply_to
@@ -44,21 +55,23 @@ async def _send_safe(client, coro_factory, name: str):
             await asyncio.sleep(e.seconds + 1)
 
 
-async def _copy_single(client, msg, dest_chat, dest_topic, name: str):
+async def _copy_single(client, msg, dest_chat, dest_topic, name: str, media_filter: str = "all"):
     """Copy one non-album message."""
+    if not _matches_media(msg, media_filter):
+        return 0
     is_web_preview = isinstance(msg.media, MessageMediaWebPage)
 
     if not msg.media or is_web_preview:
         text = (msg.text or "").strip()
         if not text:
             print(f"[{name}] Skipping empty/service message {msg.id}")
-            return
+            return 0
         await _send_safe(
             client,
             lambda: client.send_message(dest_chat, text, reply_to=dest_topic),
             name,
         )
-        return
+        return 1
 
     kwargs = dict(
         file=msg.media,
@@ -75,12 +88,16 @@ async def _copy_single(client, msg, dest_chat, dest_topic, name: str):
         path = await client.download_media(msg)
         kwargs["file"] = path
         await _send_safe(client, lambda: client.send_file(dest_chat, **kwargs), name)
+    return 1
 
 
-async def _copy_album(client, messages: list, dest_chat, dest_topic, name: str):
+async def _copy_album(client, messages: list, dest_chat, dest_topic, name: str, media_filter: str = "all"):
     """Copy a media album (grouped messages)."""
-    files = [m.media for m in messages]
     caption = next((m.text for m in messages if m.text), None)
+    messages = [m for m in messages if _matches_media(m, media_filter)]
+    if not messages:
+        return 0
+    files = [m.media for m in messages]
     try:
         await _send_safe(
             client,
@@ -95,6 +112,7 @@ async def _copy_album(client, messages: list, dest_chat, dest_topic, name: str):
             lambda: client.send_file(dest_chat, file=paths, caption=caption, reply_to=dest_topic),
             name,
         )
+    return len(messages)
 
 
 def _safe(name: str) -> str:
@@ -173,6 +191,7 @@ async def _dump_history(client, mirror: dict):
     dest_chat = mirror["dest_chat"]
     dest_topic = mirror.get("dest_topic")
     name = mirror["name"]
+    media_filter = mirror.get("media_filter", "all")
     config_start_id = mirror.get("start_from_message_id", 1)
 
     start_id = _load_progress(name, config_start_id)
@@ -190,43 +209,45 @@ async def _dump_history(client, mirror: dict):
     async for msg in client.iter_messages(source_chat, **iter_kwargs):
         if msg.grouped_id:
             if pending_group and pending_group[0] != msg.grouped_id:
-                await _copy_album(client, pending_group[1], dest_chat, dest_topic, name)
+                sent = await _copy_album(client, pending_group[1], dest_chat, dest_topic, name, media_filter)
                 last_id = pending_group[1][-1].id
-                count += len(pending_group[1])
+                count += sent
                 _save_progress(name, last_id)
                 _save_count(name, count)
                 pending_group = []
                 if os.path.exists(pause_flag):
                     print(f"[{name}] Paused at {last_id}, total dumped: {count}")
                     return
-                await asyncio.sleep(random.uniform(5, 10))
+                if sent:
+                    await asyncio.sleep(random.uniform(5, 10))
             if not pending_group:
                 pending_group = [msg.grouped_id, []]
             pending_group[1].append(msg)
         else:
             if pending_group:
-                await _copy_album(client, pending_group[1], dest_chat, dest_topic, name)
+                sent = await _copy_album(client, pending_group[1], dest_chat, dest_topic, name, media_filter)
                 last_id = pending_group[1][-1].id
-                count += len(pending_group[1])
+                count += sent
                 _save_progress(name, last_id)
                 _save_count(name, count)
                 pending_group = []
                 if os.path.exists(pause_flag):
                     print(f"[{name}] Paused at {last_id}, total dumped: {count}")
                     return
-                await asyncio.sleep(random.uniform(5, 10))
-            await _copy_single(client, msg, dest_chat, dest_topic, name)
-            count += 1
+                if sent:
+                    await asyncio.sleep(random.uniform(5, 10))
+            sent = await _copy_single(client, msg, dest_chat, dest_topic, name, media_filter)
+            count += sent
             _save_progress(name, msg.id)
             _save_count(name, count)
             if os.path.exists(pause_flag):
                 print(f"[{name}] Paused at {msg.id}, total dumped: {count}")
                 return
-            await asyncio.sleep(random.uniform(5, 10))
+            if sent:
+                await asyncio.sleep(random.uniform(5, 10))
 
     if pending_group:
-        await _copy_album(client, pending_group[1], dest_chat, dest_topic, name)
-        count += len(pending_group[1])
+        count += await _copy_album(client, pending_group[1], dest_chat, dest_topic, name, media_filter)
         _save_count(name, count)
 
     _clear_progress(name)
@@ -281,11 +302,12 @@ async def setup(client):
                         entry["mirror"]["dest_chat"],
                         entry["mirror"].get("dest_topic"),
                         entry["mirror"]["name"],
+                        entry["mirror"].get("media_filter", "all"),
                     )
 
             album_buf[gid]["task"] = asyncio.create_task(flush())
         else:
-            await _copy_single(client, msg, dest_chat, dest_topic, name)
+            await _copy_single(client, msg, dest_chat, dest_topic, name, mirror.get("media_filter", "all"))
 
     # Run history dumps sequentially
     for mirror in mirrors:

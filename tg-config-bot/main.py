@@ -15,6 +15,7 @@ from keyboards import (
     back_keyboard,
     confirm_keyboard,
     dest_type_keyboard,
+    media_filter_keyboard,
     paused_keyboard,
     running_keyboard,
     source_type_keyboard,
@@ -53,6 +54,12 @@ _DEST_PROMPT = (
     "(<b>куда</b> будет всё скидываться)."
 )
 _DEST_TYPE_PROMPT = "Выберите тип назначения:"
+_MEDIA_PROMPT = (
+    "Что пересылать?\n\n"
+    "В смешанных альбомах будут выбраны только нужные вложения, подпись сохранится.\n"
+    "В режиме «Только видео» GIF и видеокружки пропускаются."
+)
+_MEDIA_LABEL = {"all": "📦 Всё", "photo": "🖼 Только фото", "video": "🎬 Только видео"}
 _BAD_LINK = (
     "Не распознал ссылку. Нужна ссылка вида:\n"
     "<code>https://t.me/c/1234567890/100</code> (приватное)\n"
@@ -97,6 +104,7 @@ def _build_summary(data: dict) -> str:
         "<b>Конфигурация зеркала:</b>\n\n"
         f"📥 <b>Источник:</b> {src_label} · {src_name}{src_extra} · с сообщения #{data['source_from_msg']}\n\n"
         f"📤 <b>Назначение:</b> {dst_label} · {dst_name}{dst_extra}\n\n"
+        f"<b>Пересылать:</b> {_MEDIA_LABEL[data.get('media_filter', 'all')]}\n\n"
         "Запустить юзербот с этими параметрами?"
     )
 
@@ -176,12 +184,20 @@ async def handle_dest_link(message: Message, state: FSMContext):
 async def handle_dest_type(callback: CallbackQuery, state: FSMContext):
     dst_type = callback.data.split(":")[1]
     await state.update_data(dest_type=dst_type)
+    await state.set_state(SetupFlow.media_filter)
+    await callback.answer()
+    await callback.message.answer(_MEDIA_PROMPT, reply_markup=media_filter_keyboard())
+
+
+@dp.callback_query(F.data.in_({"media:all", "media:photo", "media:video"}), SetupFlow.media_filter)
+async def handle_media_filter(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(media_filter=callback.data.split(":")[1])
     await state.set_state(SetupFlow.confirm)
 
     data = await state.get_data()
     summary = _build_summary(data)
     await callback.message.answer(summary, parse_mode="HTML", reply_markup=confirm_keyboard())
-    await callback.answer()
 
 
 # ── Back buttons ─────────────────────────────────────────────────────────────
@@ -207,11 +223,18 @@ async def back_to_dest_link(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.callback_query(F.data == "back", SetupFlow.confirm)
+@dp.callback_query(F.data == "back", SetupFlow.media_filter)
 async def back_to_dest_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SetupFlow.dest_type)
     await callback.message.answer(_DEST_TYPE_PROMPT, reply_markup=dest_type_keyboard())
     await callback.answer()
+
+
+@dp.callback_query(F.data == "back", SetupFlow.confirm)
+async def back_to_media_filter(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SetupFlow.media_filter)
+    await callback.message.answer(_MEDIA_PROMPT, reply_markup=media_filter_keyboard())
 
 
 # ── Launch ───────────────────────────────────────────────────────────────────
@@ -233,6 +256,7 @@ async def handle_launch(callback: CallbackQuery, state: FSMContext):
             dest_type=data.get("dest_type", "topic"),
             userbot_dir=USERBOT_DIR,
             name=mirror_name,
+            media_filter=data.get("media_filter", "all"),
         )
         await state.update_data(pid=process.pid, mirror_name=mirror_name)
         await state.set_state(SetupFlow.running)
@@ -322,6 +346,7 @@ async def handle_resume(callback: CallbackQuery, state: FSMContext):
             dest_type=data.get("dest_type", "topic"),
             userbot_dir=USERBOT_DIR,
             name=data["mirror_name"],
+            media_filter=data.get("media_filter", "all"),
         )
         await state.update_data(pid=process.pid)
         await state.set_state(SetupFlow.running)

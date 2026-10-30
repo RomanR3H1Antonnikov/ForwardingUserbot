@@ -24,7 +24,10 @@ def launch_userbot(
     dest_type: str,
     userbot_dir: str,
     name: str | None = None,
+    media_filter: str = "all",
 ) -> subprocess.Popen:
+    if media_filter not in {"all", "photo", "video"}:
+        raise ValueError(f"Unknown media filter: {media_filter}")
     userbot_path = (_HERE / userbot_dir).resolve()
 
     # Kill any previously launched userbot to avoid session lock
@@ -43,6 +46,7 @@ def launch_userbot(
             "dest_chat": dest_chat,
             "dest_topic": dest_topic,
             "dump_history": True,
+            "media_filter": media_filter,
             "start_from_message_id": source_from_msg,
         }]
     }

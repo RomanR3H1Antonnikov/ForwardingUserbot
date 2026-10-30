@@ -28,6 +28,15 @@ def dest_type_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def media_filter_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 Всё", callback_data="media:all")],
+        [InlineKeyboardButton(text="🖼 Только фото", callback_data="media:photo")],
+        [InlineKeyboardButton(text="🎬 Только видео", callback_data="media:video")],
+        [InlineKeyboardButton(text="← Назад", callback_data="back")],
+    ])
+
+
 def confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Запустить", callback_data="launch")],
